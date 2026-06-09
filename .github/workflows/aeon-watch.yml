@@ -1,0 +1,49 @@
+name: Aeon pitch watch
+
+on:
+  schedule:
+    - cron: '0 9 * * *'      # every day at 09:00 UTC (~10:00 UK in summer)
+  workflow_dispatch:          # adds a manual "Run workflow" button for testing
+
+permissions:
+  contents: write             # for the keep-alive commit
+  issues: write               # to open an alert issue
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the pitch page
+        id: check
+        run: |
+          page=$(curl -sL --retry 3 https://aeon.co/pitch)
+          if echo "$page" | grep -qi "closed for pitches"; then
+            echo "status=closed" >> "$GITHUB_OUTPUT"
+            echo "Still closed for pitches."
+          else
+            echo "status=open" >> "$GITHUB_OUTPUT"
+            echo "Phrase missing — Aeon may be open!"
+          fi
+
+      - name: Open an alert issue
+        if: steps.check.outputs.status == 'open'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing=$(gh issue list --state open --search "Aeon may be open in:title" --json number --jq 'length')
+          if [ "$existing" -eq 0 ]; then
+            gh issue create \
+              --title "Aeon may be open for pitches — check aeon.co/pitch" \
+              --body "The phrase 'closed for pitches' is no longer on https://aeon.co/pitch (checked $(date -u)). Go take a look."
+          fi
+
+      - name: Keep the schedule alive
+        run: |
+          date -u > .last-checked
+          git config user.name "aeon-watch-bot"
+          git config user.email "actions@github.com"
+          git add .last-checked
+          git commit -m "keep-alive: checked $(date -u)" || exit 0
+          git push
